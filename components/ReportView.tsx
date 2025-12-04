@@ -1,7 +1,8 @@
 
+
 import React, { useState } from 'react';
 import { ProjectState, ReportSectionConfig } from '../types';
-import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend } from 'recharts';
+import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend, ReferenceLine } from 'recharts';
 import { generateReportAnalysis } from '../services/geminiService';
 import ReactMarkdown from 'react-markdown';
 
@@ -57,7 +58,7 @@ const ReportChart: React.FC<{ data: any[], dataKey: string, name: string, color:
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="name" tick={{fontSize: 9}} interval={0} />
                 <YAxis tick={{fontSize: 10}} />
-                <Tooltip />
+                <Tooltip formatter={(value: number) => [value.toLocaleString('pt-PT', { maximumFractionDigits: 2 }), name.includes('kWh') ? 'kWh' : name.includes('kW') ? 'kW' : 'kVAr']} />
                 <Legend />
                 <Bar dataKey={dataKey} name={name} fill={color} />
             </BarChart>
@@ -67,11 +68,13 @@ const ReportChart: React.FC<{ data: any[], dataKey: string, name: string, color:
 
 const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
   const [isGenerating, setIsGenerating] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   
   // Section Visibility Configuration
   const [sections, setSections] = useState<ReportSectionConfig>({
       intro: true,
       active: true,
+      energy: true,
       inductive: true,
       capacitive: true,
       tables: true,
@@ -84,6 +87,47 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
     const text = await generateReportAnalysis(project.hourlyData, project.metadata);
     updateAnalysis(text);
     setIsGenerating(false);
+  };
+
+  const handleExport = (type: 'html' | 'doc') => {
+      const content = document.getElementById('printable-report');
+      if (!content) return;
+
+      // Extract styles and content
+      const html = `
+        <!DOCTYPE html>
+        <html lang="pt-PT">
+        <head>
+          <meta charset="UTF-8">
+          <title>Relatório ${project.metadata.name}</title>
+          <script src="https://cdn.tailwindcss.com"></script>
+          <style>
+             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+             body { font-family: 'Inter', sans-serif; background: #fff; color: #000; }
+             .recharts-wrapper { margin: 0 auto; }
+             table { border-collapse: collapse; width: 100%; }
+             td, th { border: 1px solid #e5e7eb; padding: 0.5rem; }
+             /* Print breaks for Word/HTML */
+             .page-break { page-break-before: always; break-before: page; margin-top: 2rem; border-top: 1px dashed #ccc; padding-top: 2rem;}
+             @media print { .page-break { border: none; } }
+          </style>
+        </head>
+        <body>
+          <div class="max-w-4xl mx-auto p-8">
+            ${content.innerHTML}
+          </div>
+        </body>
+        </html>
+      `;
+      
+      const blob = new Blob([html], {type: type === 'html' ? 'text/html' : 'application/msword'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Relatorio_${project.metadata.name.replace(/\s+/g, '_') || 'Export'}.${type}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setShowExportMenu(false);
   };
 
   // Aggregated data for Report (Monthly)
@@ -167,7 +211,7 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
                 <h2 className="font-bold">Configuração do Relatório</h2>
                 <p className="text-xs text-slate-300">Selecione as secções que deseja incluir.</p>
             </div>
-             <div className="flex gap-4">
+             <div className="flex gap-4 relative">
                 <button 
                     onClick={handleGenerateAI}
                     disabled={isGenerating}
@@ -175,12 +219,33 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
                 >
                     {isGenerating ? 'A gerar texto...' : 'Gerar Análise IA'}
                 </button>
-                <button 
-                    onClick={() => window.print()}
-                    className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm font-medium transition"
-                >
-                    Imprimir / PDF
-                </button>
+
+                <div className="relative">
+                    <button 
+                        onClick={() => setShowExportMenu(!showExportMenu)}
+                        className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm font-medium transition flex items-center gap-2"
+                    >
+                        Exportar / Imprimir
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                    </button>
+                    
+                    {showExportMenu && (
+                        <div className="absolute right-0 mt-2 w-48 bg-white text-slate-800 rounded shadow-xl border border-gray-200 z-50">
+                            <button onClick={() => { window.print(); setShowExportMenu(false); }} className="w-full text-left px-4 py-2 hover:bg-gray-100 flex items-center gap-2">
+                                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+                                Imprimir / PDF
+                            </button>
+                            <button onClick={() => handleExport('html')} className="w-full text-left px-4 py-2 hover:bg-gray-100 flex items-center gap-2 border-t border-gray-100">
+                                <svg className="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+                                HTML (Web)
+                            </button>
+                            <button onClick={() => handleExport('doc')} className="w-full text-left px-4 py-2 hover:bg-gray-100 flex items-center gap-2 border-t border-gray-100">
+                                <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                                Word / Docs
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
         
@@ -193,6 +258,10 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
             <label className="flex items-center space-x-2 cursor-pointer">
                 <input type="checkbox" checked={sections.active} onChange={e => setSections(p => ({...p, active: e.target.checked}))} className="rounded" />
                 <span>Análise Ativa</span>
+            </label>
+            <label className="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" checked={sections.energy} onChange={e => setSections(p => ({...p, energy: e.target.checked}))} className="rounded" />
+                <span>Análise Energia (kWh)</span>
             </label>
             <label className="flex items-center space-x-2 cursor-pointer">
                 <input type="checkbox" checked={sections.inductive} onChange={e => setSections(p => ({...p, inductive: e.target.checked}))} className="rounded" />
@@ -213,6 +282,7 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
         </div>
       </div>
 
+      <div id="printable-report">
       {/* --- Page 1: Cover (Always Visible) --- */}
       <div className="min-h-[297mm] p-16 flex flex-col justify-between border-b-2 border-gray-100 page-break break-after-page print:break-after-page">
         <div className="text-right border-b-4 border-slate-900 pb-4">
@@ -266,33 +336,39 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
                 <span className="text-gray-400">--</span>
             </li>
             )}
+            {sections.energy && (
+            <li className="flex justify-between border-b border-gray-100 pb-2">
+                <span className="font-medium text-slate-700">3. Análise de Consumo de Energia Ativa (kWh)</span>
+                <span className="text-gray-400">--</span>
+            </li>
+            )}
             {sections.inductive && (
             <li className="flex justify-between border-b border-gray-100 pb-2">
-                <span className="font-medium text-slate-700">3. Análise de Energia Reativa Indutiva</span>
+                <span className="font-medium text-slate-700">{sections.energy ? '4' : '3'}. Análise de Energia Reativa Indutiva</span>
                 <span className="text-gray-400">--</span>
             </li>
             )}
             {sections.capacitive && (
              <li className="flex justify-between border-b border-gray-100 pb-2">
-                <span className="font-medium text-slate-700">4. Análise de Energia Reativa Capacitiva</span>
+                <span className="font-medium text-slate-700">{sections.energy ? '5' : '4'}. Análise de Energia Reativa Capacitiva</span>
                 <span className="text-gray-400">--</span>
             </li>
             )}
             {sections.tables && (
             <li className="flex justify-between border-b border-gray-100 pb-2">
-                <span className="font-medium text-slate-700">5. Tabelas Detalhadas</span>
+                <span className="font-medium text-slate-700">{sections.energy ? '6' : '5'}. Tabelas Detalhadas</span>
                 <span className="text-gray-400">--</span>
             </li>
             )}
             {sections.ai && (
             <li className="flex justify-between border-b border-gray-100 pb-2">
-                <span className="font-medium text-slate-700">6. Parecer Técnico (IA)</span>
+                <span className="font-medium text-slate-700">{sections.energy ? '7' : '6'}. Parecer Técnico (IA)</span>
                 <span className="text-gray-400">--</span>
             </li>
             )}
              {sections.conclusion && (
              <li className="flex justify-between border-b border-gray-100 pb-2">
-                <span className="font-medium text-slate-700">7. Conclusão</span>
+                <span className="font-medium text-slate-700">{sections.energy ? '8' : '7'}. Conclusão</span>
                 <span className="text-gray-400">--</span>
             </li>
             )}
@@ -395,14 +471,61 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
       </div>
       )}
 
+      {/* --- Page X: Active Energy (kWh) --- */}
+      {sections.energy && (
+      <div className="min-h-[297mm] p-16 page-break break-after-page print:break-after-page">
+        <h2 className="text-2xl font-bold text-slate-900 mb-6 pb-2 border-b border-gray-300">3. Análise de Consumo de Energia Ativa</h2>
+        <p className="mb-4 text-gray-600 text-sm">O Consumo de Energia Ativa (kWh) representa o volume total de energia absorvida pela instalação ao longo do tempo.</p>
+        
+        <ReportChart data={monthlyData} dataKey="activeSum" name="Energia Ativa Total (kWh)" color="#1d4ed8" />
+        <p className="text-center text-xs text-gray-500 mb-8 italic">Fig 3.1 Perfil Anual de Consumo de Energia (kWh)</p>
+
+        <h3 className="font-bold text-lg mb-2 text-slate-700">Tabela de Consumo Mensal</h3>
+        <table className="w-full text-xs border border-gray-300 mb-4 text-black">
+             <thead className="bg-blue-50">
+                <tr><th className="border p-2">Mês</th><th className="border p-2 text-right">Consumo (kWh)</th><th className="border p-2 text-right">% do Total</th></tr>
+             </thead>
+             <tbody>
+                {monthlyData.map((d, i) => (
+                    <tr key={i}>
+                        <td className="border p-2 font-medium">{d.name}</td>
+                        <td className="border p-2 text-right font-bold text-black">{d.activeSum.toLocaleString('pt-PT', {maximumFractionDigits: 0})}</td>
+                        <td className="border p-2 text-right text-gray-600">{((d.activeSum / (activeSumStats.total || 1)) * 100).toFixed(1)}%</td>
+                    </tr>
+                ))}
+                <tr className="bg-gray-100 font-bold border-t-2 border-gray-400">
+                    <td className="border p-2 text-black">TOTAL ANUAL</td>
+                    <td className="border p-2 text-right text-black">{activeSumStats.total.toLocaleString('pt-PT', {maximumFractionDigits: 0})}</td>
+                    <td className="border p-2 text-right text-black">100%</td>
+                </tr>
+             </tbody>
+        </table>
+
+        {/* Stats Text */}
+        <div className="bg-slate-50 p-4 rounded border-l-4 border-blue-700 text-sm text-justify">
+            <h4 className="font-bold text-blue-900 mb-2">Análise de Consumo Energético</h4>
+            <p className="mb-1 text-slate-800">
+                O consumo total acumulado no ano foi de <strong>{activeSumStats.total.toLocaleString('pt-PT', {maximumFractionDigits: 0})} kWh</strong>.
+            </p>
+            <p className="mb-1 text-slate-800">
+                A média mensal de consumo situa-se em <strong>{activeSumStats.avg.toLocaleString('pt-PT', {maximumFractionDigits: 0})} kWh</strong>.
+            </p>
+            <p className="text-slate-800">
+                O mês de maior consumo foi <strong>{activeSumStats.maxMonth}</strong> com {activeSumStats.max.toLocaleString('pt-PT', {maximumFractionDigits: 0})} kWh ({((activeSumStats.max/(activeSumStats.total || 1))*100).toFixed(1)}% do total), 
+                enquanto o menor registo ocorreu em <strong>{activeSumStats.minMonth}</strong>.
+            </p>
+        </div>
+      </div>
+      )}
+
       {/* --- Page 5: Inductive Power --- */}
       {sections.inductive && (
       <div className="min-h-[297mm] p-16 page-break break-after-page print:break-after-page">
-        <h2 className="text-2xl font-bold text-slate-900 mb-6 pb-2 border-b border-gray-300">3. Análise de Reativa Indutiva</h2>
+        <h2 className="text-2xl font-bold text-slate-900 mb-6 pb-2 border-b border-gray-300">{sections.energy ? '4' : '3'}. Análise de Reativa Indutiva</h2>
          <p className="mb-4 text-gray-600 text-sm">Energia associada a motores e transformadores. O excesso pode gerar penalizações.</p>
 
         <ReportChart data={monthlyData} dataKey="inductive" name="Reativa Indutiva Média (kVAr)" color="#dc2626" />
-        <p className="text-center text-xs text-gray-500 mb-8 italic">Fig 3.1 Evolução Mensal da Reativa Indutiva</p>
+        <p className="text-center text-xs text-gray-500 mb-8 italic">Fig {sections.energy ? '4' : '3'}.1 Evolução Mensal da Reativa Indutiva</p>
 
         <h3 className="font-bold text-lg mb-2 text-slate-700">Tabela de Dados (Indutiva)</h3>
         <table className="w-full text-xs border border-gray-300 mb-4 text-black">
@@ -436,11 +559,11 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
        {/* --- Page 6: Capacitive Power --- */}
        {sections.capacitive && (
        <div className="min-h-[297mm] p-16 page-break break-after-page print:break-after-page">
-        <h2 className="text-2xl font-bold text-slate-900 mb-6 pb-2 border-b border-gray-300">4. Análise de Reativa Capacitiva</h2>
+        <h2 className="text-2xl font-bold text-slate-900 mb-6 pb-2 border-b border-gray-300">{sections.energy ? '5' : '4'}. Análise de Reativa Capacitiva</h2>
          <p className="mb-4 text-gray-600 text-sm">Energia injetada na rede, comum em instalações com compensação fixa excessiva ou cabos longos em vazio.</p>
 
         <ReportChart data={monthlyData} dataKey="capacitive" name="Reativa Capacitiva Média (kVAr)" color="#16a34a" />
-        <p className="text-center text-xs text-gray-500 mb-8 italic">Fig 4.1 Evolução Mensal da Reativa Capacitiva</p>
+        <p className="text-center text-xs text-gray-500 mb-8 italic">Fig {sections.energy ? '5' : '4'}.1 Evolução Mensal da Reativa Capacitiva</p>
 
         <h3 className="font-bold text-lg mb-2 text-slate-700">Tabela de Dados (Capacitiva)</h3>
         <table className="w-full text-xs border border-gray-300 mb-4 text-black">
@@ -473,9 +596,9 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
         <>
             {/* 5.1 Averages */}
             <div className="min-h-[297mm] p-16 page-break break-after-page print:break-after-page">
-                <h2 className="text-2xl font-bold text-slate-900 mb-8 pb-2 border-b border-gray-300">5. Tabelas Gerais Detalhadas</h2>
+                <h2 className="text-2xl font-bold text-slate-900 mb-8 pb-2 border-b border-gray-300">{sections.energy ? '6' : '5'}. Tabelas Gerais Detalhadas</h2>
                 
-                <h3 className="text-lg font-bold text-slate-700 mb-2">5.1 Média por Mês (Potência)</h3>
+                <h3 className="text-lg font-bold text-slate-700 mb-2">{sections.energy ? '6' : '5'}.1 Média por Mês (Potência)</h3>
                 <div className="mb-6">
                     <table className="w-full text-xs border border-gray-300 text-black">
                         <thead className="bg-blue-50">
@@ -509,7 +632,7 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
                 <div className="bg-blue-50 p-4 rounded border border-blue-200 text-sm text-justify">
                     <h4 className="font-bold text-blue-900 mb-2">Análise de Potência Média</h4>
                     <p>
-                        A tabela 5.1 evidencia o perfil médio de carga da instalação. 
+                        A tabela {sections.energy ? '6' : '5'}.1 evidencia o perfil médio de carga da instalação. 
                         A potência ativa média anual situa-se em <strong>{activeStats.avg.toFixed(2)} kW</strong>, 
                         o que reflete o regime de laboração base.
                     </p>
@@ -522,9 +645,9 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
 
             {/* 5.2 Maximums */}
             <div className="min-h-[297mm] p-16 page-break break-after-page print:break-after-page">
-                <h2 className="text-2xl font-bold text-slate-900 mb-8 pb-2 border-b border-gray-300">5. Tabelas Gerais Detalhadas (Cont.)</h2>
+                <h2 className="text-2xl font-bold text-slate-900 mb-8 pb-2 border-b border-gray-300">{sections.energy ? '6' : '5'}. Tabelas Gerais Detalhadas (Cont.)</h2>
 
-                <h3 className="text-lg font-bold text-slate-700 mb-2">5.2 Máximo por Mês (Picos)</h3>
+                <h3 className="text-lg font-bold text-slate-700 mb-2">{sections.energy ? '6' : '5'}.2 Máximo por Mês (Picos)</h3>
                 <div className="mb-6">
                     <table className="w-full text-xs border border-gray-300 text-black">
                         <thead className="bg-red-50">
@@ -558,7 +681,7 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
                 <div className="bg-red-50 p-4 rounded border border-red-200 text-sm text-justify">
                     <h4 className="font-bold text-red-900 mb-2">Análise de Picos Máximos</h4>
                     <p>
-                        A tabela 5.2 apresenta os valores extremos registados em cada mês. Estes valores são críticos para o dimensionamento da potência contratada e equipamentos de proteção.
+                        A tabela {sections.energy ? '6' : '5'}.2 apresenta os valores extremos registados em cada mês. Estes valores são críticos para o dimensionamento da potência contratada e equipamentos de proteção.
                         O pico máximo absoluto de potência ativa foi de <strong>{activeMaxStats.max.toFixed(2)} kW</strong> em {activeMaxStats.maxMonth}.
                     </p>
                     <p className="mt-2">
@@ -569,9 +692,9 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
 
             {/* 5.3 Totals */}
             <div className="min-h-[297mm] p-16 page-break break-after-page print:break-after-page">
-                <h2 className="text-2xl font-bold text-slate-900 mb-8 pb-2 border-b border-gray-300">5. Tabelas Gerais Detalhadas (Cont.)</h2>
+                <h2 className="text-2xl font-bold text-slate-900 mb-8 pb-2 border-b border-gray-300">{sections.energy ? '6' : '5'}. Tabelas Gerais Detalhadas (Cont.)</h2>
 
-                <h3 className="text-lg font-bold text-slate-700 mb-2">5.3 Total por Mês (Energia / Soma)</h3>
+                <h3 className="text-lg font-bold text-slate-700 mb-2">{sections.energy ? '6' : '5'}.3 Total por Mês (Energia / Soma)</h3>
                 <div className="mb-6">
                     <table className="w-full text-xs border border-gray-300 text-black">
                         <thead className="bg-green-50">
@@ -605,8 +728,8 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
                 <div className="bg-green-50 p-4 rounded border border-green-200 text-sm text-justify">
                     <h4 className="font-bold text-green-900 mb-2">Análise de Energia Total</h4>
                     <p>
-                        A tabela 5.3 quantifica o consumo total de energia. O consumo anual de energia ativa ascende a <strong>{activeSumStats.total.toLocaleString('pt-PT', {maximumFractionDigits: 0})} kWh</strong>.
-                        A distribuição mensal mostra que {activeSumStats.maxMonth} foi o mês com maior peso na fatura energética ({((activeSumStats.max / activeSumStats.total) * 100).toFixed(1)}% do total anual).
+                        A tabela {sections.energy ? '6' : '5'}.3 quantifica o consumo total de energia. O consumo anual de energia ativa ascende a <strong>{activeSumStats.total.toLocaleString('pt-PT', {maximumFractionDigits: 0})} kWh</strong>.
+                        A distribuição mensal mostra que {activeSumStats.maxMonth} foi o mês com maior peso na fatura energética ({((activeSumStats.max / (activeSumStats.total || 1)) * 100).toFixed(1)}% do total anual).
                     </p>
                     <p className="mt-2">
                         A relação entre energia reativa (Indutiva+Capacitiva) e Ativa deve ser monitorizada para garantir a eficiência global da instalação.
@@ -619,7 +742,7 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
       {/* --- Page 8: AI Analysis --- */}
       {sections.ai && (
       <div className="min-h-[297mm] p-16 page-break break-after-page print:break-after-page">
-        <h2 className="text-2xl font-bold text-slate-900 mb-8 pb-2 border-b border-gray-300">6. Parecer Técnico (IA)</h2>
+        <h2 className="text-2xl font-bold text-slate-900 mb-8 pb-2 border-b border-gray-300">{sections.energy ? '7' : '6'}. Parecer Técnico (IA)</h2>
         <div className="prose prose-slate max-w-none text-justify text-sm print:prose-sm">
             {project.aiAnalysis ? (
                 <ReactMarkdown
@@ -654,7 +777,7 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
        {sections.conclusion && (
        <div className="min-h-[297mm] p-16 page-break break-after-page print:break-after-page flex flex-col justify-between">
         <div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-8 pb-2 border-b border-gray-300">7. Conclusão</h2>
+            <h2 className="text-2xl font-bold text-slate-900 mb-8 pb-2 border-b border-gray-300">{sections.energy ? '8' : '7'}. Conclusão</h2>
             <p className="text-gray-700 text-justify mb-4 leading-relaxed">
                 Este relatório compila os dados de telecontagem fornecidos, oferecendo uma visão clara do perfil energético da instalação <strong>{project.metadata.name}</strong>.
             </p>
@@ -691,6 +814,7 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
                 <p className="text-sm font-mono">www.koelho2000.com</p>
                 <p className="text-xs text-gray-500 mt-2">Versão 1.3.0</p>
             </div>
+      </div>
       </div>
 
     </div>

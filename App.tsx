@@ -460,7 +460,7 @@ const App: React.FC = () => {
                     </button>
                 </div>
 
-                <Dashboard data={project.hourlyData} />
+                <Dashboard data={project.hourlyData} rawData={project.rawData} />
             </div>
         )}
 

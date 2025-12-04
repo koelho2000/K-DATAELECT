@@ -1,14 +1,16 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ResponsiveContainer, ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Area, ReferenceLine, Brush } from 'recharts';
-import { HourlyData, LoadType, Period } from '../types';
+import { HourlyData, TelemetryRow, LoadType, Period } from '../types';
 import { generateCSV, ExportConfig } from '../services/dataService';
 
 interface DashboardProps {
   data: HourlyData[];
+  rawData: TelemetryRow[];
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ data }) => {
+const Dashboard: React.FC<DashboardProps> = ({ data, rawData }) => {
   const [period, setPeriod] = useState<Period>(Period.MONTHLY);
   const [loadType, setLoadType] = useState<LoadType>(LoadType.ACTIVE);
   const [focusDate, setFocusDate] = useState<Date>(new Date());
@@ -22,6 +24,10 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
   });
   const [exportRange, setExportRange] = useState<'current' | 'all'>('current');
 
+  // Virtual Scroll State
+  const [scrollTop, setScrollTop] = useState(0);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+
   // Initialize focus date when data loads
   useEffect(() => {
     if (data.length > 0) {
@@ -29,6 +35,14 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
         setFocusDate(new Date(data[0].timestamp));
     }
   }, [data]);
+
+  // Reset scroll when data filter changes
+  useEffect(() => {
+    if (tableContainerRef.current) {
+        tableContainerRef.current.scrollTop = 0;
+    }
+    setScrollTop(0);
+  }, [period, focusDate, loadType]);
 
   // Global Stats Calculation (Annual / All Data)
   const globalStats = useMemo(() => {
@@ -115,6 +129,15 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
         }));
   }, [data, period, focusDate, loadType]);
 
+  // Optimized Chart Data (Downsampling for performance)
+  const chartData = useMemo(() => {
+      const MAX_POINTS = 2000;
+      if (filteredData.length <= MAX_POINTS) return filteredData;
+      
+      const factor = Math.ceil(filteredData.length / MAX_POINTS);
+      return filteredData.filter((_, i) => i % factor === 0);
+  }, [filteredData]);
+
   // Navigation Handlers
   const handleNavigate = (direction: 'prev' | 'next') => {
       const newDate = new Date(focusDate);
@@ -178,9 +201,15 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
   // Export Logic Handler
   const handleExport = () => {
       // Determine which dataset to use
-      let datasetToExport = data; // Default ALL
+      let datasetToExport: any[] = data; 
+      
+      // If raw resolution is selected, use rawData instead of hourly aggregated data
+      if (exportConfig.resolution === 'raw') {
+          datasetToExport = rawData;
+      }
+
       if (exportRange === 'current') {
-          // Re-filter source data based on current period (similar to filteredData but keeping full objects)
+          // Re-filter source data based on current period
           let start: Date, end: Date;
           const year = focusDate.getFullYear();
           const month = focusDate.getMonth();
@@ -201,12 +230,29 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
               start = new Date(year, 0, 1);
               end = new Date(year, 11, 31, 23, 59, 59);
           }
-          datasetToExport = data.filter(d => d.timestamp >= start && d.timestamp <= end);
+          
+          datasetToExport = datasetToExport.filter((d: any) => d.timestamp >= start && d.timestamp <= end);
       }
 
       generateCSV(datasetToExport, exportConfig);
       setIsExportModalOpen(false);
   };
+
+  // --- Virtualization Logic ---
+  const ROW_HEIGHT = 37; // Fixed row height in pixels (h-9 approx)
+  const TABLE_HEIGHT = 320; // max-h-80 = 20rem = 320px
+  const OVERSCAN = 10; // Extra rows to render above/below
+  
+  const totalRows = filteredData.length;
+  // Calculate indices
+  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const endIndex = Math.min(totalRows, Math.ceil((scrollTop + TABLE_HEIGHT) / ROW_HEIGHT) + OVERSCAN);
+  
+  const visibleRows = filteredData.slice(startIndex, endIndex);
+  
+  // Calculate spacers
+  const paddingTop = startIndex * ROW_HEIGHT;
+  const paddingBottom = (totalRows - endIndex) * ROW_HEIGHT;
 
   return (
     <div className="space-y-6">
@@ -317,12 +363,13 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
                 <div className="text-xs text-gray-500 font-mono">
                     Total: <span className="font-bold text-gray-800">{viewStats.sum.toFixed(0)}</span> | 
                     Max: <span className="font-bold text-gray-800">{viewStats.max.toFixed(2)}</span>
+                    {filteredData.length > 2000 && <span className="ml-2 text-orange-500 text-[10px]">(Amostragem Otimizada)</span>}
                 </div>
             )}
         </div>
 
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={filteredData} margin={{ top: 5, right: 30, left: 20, bottom: 50 }}>
+          <ComposedChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 50 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
             <XAxis 
                 dataKey="timestamp" 
@@ -360,10 +407,10 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
         </ResponsiveContainer>
       </div>
 
-      {/* Data Table with Export */}
+      {/* Data Table with Virtual Scroll */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-             <h3 className="text-lg font-semibold text-gray-700">Dados Horários ({filteredData.length} registos)</h3>
+             <h3 className="text-lg font-semibold text-gray-700">Dados Horários ({totalRows} registos)</h3>
              <button 
                 onClick={() => setIsExportModalOpen(true)}
                 className="text-sm bg-blue-50 text-blue-700 px-3 py-2 rounded hover:bg-blue-100 flex items-center border border-blue-200"
@@ -372,30 +419,49 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
                 Exportar Excel (CSV)
              </button>
         </div>
-        <div className="overflow-x-auto max-h-80">
+        
+        {/* Virtualized Container */}
+        <div 
+            ref={tableContainerRef}
+            className="overflow-auto max-h-80 relative"
+            onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+        >
             <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50 sticky top-0">
+                <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
                     <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data/Hora</th>
-                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Valor ({loadType === 'active' ? 'kW' : 'kVAr'})</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Data/Hora</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Valor ({loadType === 'active' ? 'kW' : 'kVAr'})</th>
                     </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                    {filteredData.slice(0, 1000).map((row, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50">
+                    {/* Top Spacer */}
+                    {paddingTop > 0 && (
+                        <tr style={{ height: paddingTop }}>
+                            <td colSpan={2} />
+                        </tr>
+                    )}
+                    
+                    {/* Visible Rows */}
+                    {visibleRows.map((row) => (
+                        <tr key={row.timestamp} className="hover:bg-gray-50 h-[37px]">
                             <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-900">{row.label}</td>
                             <td className="px-6 py-2 whitespace-nowrap text-sm text-right font-medium text-gray-900">{row.val.toFixed(2)}</td>
                         </tr>
                     ))}
-                    {filteredData.length > 1000 && (
-                        <tr>
-                            <td colSpan={2} className="px-6 py-4 text-center text-gray-500 text-sm italic">
-                                ... e mais {filteredData.length - 1000} linhas (exporte para ver tudo)
-                            </td>
+
+                    {/* Bottom Spacer */}
+                    {paddingBottom > 0 && (
+                        <tr style={{ height: paddingBottom }}>
+                            <td colSpan={2} />
                         </tr>
                     )}
                 </tbody>
             </table>
+            {totalRows === 0 && (
+                 <div className="text-center py-8 text-gray-500 text-sm italic">
+                    Sem dados para mostrar neste período.
+                 </div>
+            )}
         </div>
       </div>
 
@@ -429,12 +495,17 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
                             value={exportConfig.resolution}
                             onChange={(e) => setExportConfig({...exportConfig, resolution: e.target.value as any})}
                         >
+                            <option value="raw">Detalhado (Original / 15 min)</option>
                             <option value="hourly">Horário (1h)</option>
                             <option value="daily">Diário (24h)</option>
                             <option value="monthly">Mensal</option>
                         </select>
                         <p className="text-xs text-gray-400 mt-1">
-                            {exportConfig.resolution === 'hourly' ? 'Exporta linhas para cada hora.' : 'Exporta a soma de energia (kWh/kVArh) por dia ou mês.'}
+                            {exportConfig.resolution === 'hourly' 
+                                ? 'Exporta linhas para cada hora (Média).' 
+                                : exportConfig.resolution === 'raw' 
+                                    ? 'Exporta dados originais (normalmente 15m).' 
+                                    : 'Exporta a soma de energia (kWh/kVArh) por dia ou mês.'}
                         </p>
                     </div>
 
@@ -470,7 +541,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
 
                     {/* Summary */}
                     <div className="bg-slate-900 p-3 rounded text-sm text-gray-400 border border-slate-700">
-                        <p><strong>Resumo:</strong> Exportar dados {exportConfig.resolution === 'hourly' ? 'Horários' : exportConfig.resolution === 'daily' ? 'Diários' : 'Mensais'}.</p>
+                        <p><strong>Resumo:</strong> Exportar dados {exportConfig.resolution === 'hourly' ? 'Horários' : exportConfig.resolution === 'daily' ? 'Diários' : exportConfig.resolution === 'raw' ? 'Originais (15m)' : 'Mensais'}.</p>
                         <p>Separador: Ponto e vírgula (;).</p>
                     </div>
                   </div>

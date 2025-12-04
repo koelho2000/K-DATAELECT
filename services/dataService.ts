@@ -1,4 +1,5 @@
 
+
 import { TelemetryRow, HourlyData, ColumnMapping } from '../types';
 
 declare global {
@@ -240,7 +241,7 @@ export const aggregateToHourly = (rows: TelemetryRow[]): HourlyData[] => {
 };
 
 export interface ExportConfig {
-    resolution: 'hourly' | 'daily' | 'monthly';
+    resolution: 'raw' | 'hourly' | 'daily' | 'monthly';
     splitDateTime: boolean;
     columns: {
         active: boolean;
@@ -249,12 +250,22 @@ export interface ExportConfig {
     };
 }
 
-export const generateCSV = (data: HourlyData[], config: ExportConfig) => {
+export const generateCSV = (data: any[], config: ExportConfig) => {
     // 1. Filter and Aggregate based on resolution
     let processedData: any[] = [];
 
-    if (config.resolution === 'hourly') {
-        processedData = data.map(d => ({
+    if (config.resolution === 'raw') {
+         processedData = data.map((d: TelemetryRow) => ({
+            timestamp: d.timestamp,
+            date: d.timestamp.toLocaleDateString('pt-PT'),
+            time: d.timestamp.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }),
+            dateTime: d.timestamp.toLocaleString('pt-PT'),
+            active: d.activePower,
+            inductive: d.inductivePower,
+            capacitive: d.capacitivePower
+        }));
+    } else if (config.resolution === 'hourly') {
+        processedData = data.map((d: HourlyData) => ({
             timestamp: d.timestamp,
             date: d.timestamp.toLocaleDateString('pt-PT'),
             time: d.timestamp.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }),
@@ -305,14 +316,14 @@ export const generateCSV = (data: HourlyData[], config: ExportConfig) => {
     const headers: string[] = [];
     if (config.splitDateTime) {
         headers.push('Data');
-        if (config.resolution === 'hourly') headers.push('Hora');
+        if (config.resolution === 'hourly' || config.resolution === 'raw') headers.push('Hora');
     } else {
         headers.push('Período');
     }
 
-    if (config.columns.active) headers.push(config.resolution === 'hourly' ? 'Ativa (kW)' : 'Ativa (kWh)');
-    if (config.columns.inductive) headers.push(config.resolution === 'hourly' ? 'Indutiva (kVAr)' : 'Indutiva (kVArh)');
-    if (config.columns.capacitive) headers.push(config.resolution === 'hourly' ? 'Capacitiva (kVAr)' : 'Capacitiva (kVArh)');
+    if (config.columns.active) headers.push((config.resolution === 'hourly' || config.resolution === 'raw') ? 'Ativa (kW)' : 'Ativa (kWh)');
+    if (config.columns.inductive) headers.push((config.resolution === 'hourly' || config.resolution === 'raw') ? 'Indutiva (kVAr)' : 'Indutiva (kVArh)');
+    if (config.columns.capacitive) headers.push((config.resolution === 'hourly' || config.resolution === 'raw') ? 'Capacitiva (kVAr)' : 'Capacitiva (kVArh)');
 
     // 3. Build Rows
     const rows = processedData.map(d => {
@@ -320,14 +331,15 @@ export const generateCSV = (data: HourlyData[], config: ExportConfig) => {
         
         if (config.splitDateTime) {
             row.push(d.date);
-            if (config.resolution === 'hourly') row.push(d.time);
+            if (config.resolution === 'hourly' || config.resolution === 'raw') row.push(d.time);
         } else {
             row.push(d.dateTime);
         }
 
-        if (config.columns.active) row.push(d.active.toFixed(2).replace('.', ','));
-        if (config.columns.inductive) row.push(d.inductive.toFixed(2).replace('.', ','));
-        if (config.columns.capacitive) row.push(d.capacitive.toFixed(2).replace('.', ','));
+        // Use dot for decimal separator (removed .replace('.', ','))
+        if (config.columns.active) row.push(d.active.toFixed(2));
+        if (config.columns.inductive) row.push(d.inductive.toFixed(2));
+        if (config.columns.capacitive) row.push(d.capacitive.toFixed(2));
         return row;
     });
 

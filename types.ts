@@ -83,6 +83,7 @@ export interface ColumnMapping {
 export interface ReportSectionConfig {
   intro: boolean;
   active: boolean;
+  energy: boolean;
   inductive: boolean;
   capacitive: boolean;
   tables: boolean;
