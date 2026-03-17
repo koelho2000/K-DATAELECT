@@ -1,12 +1,121 @@
 
 
-import { TelemetryRow, HourlyData, ColumnMapping } from '../types';
+import { TelemetryRow, HourlyData, ColumnMapping, TariffCycle, Season, DayType, TariffOption } from '../types';
 
 declare global {
   interface Window {
     XLSX: any;
   }
 }
+
+// Helper to determine the last Sunday of a given month (2=March, 9=October)
+const getLastSunday = (year: number, month: number): Date => {
+  const date = new Date(year, month + 1, 0);
+  const day = date.getDay();
+  date.setDate(date.getDate() - day);
+  date.setHours(2, 0, 0, 0);
+  return date;
+};
+
+const getMinutes = (date: Date) => date.getHours() * 60 + date.getMinutes();
+
+export const getTariffInfo = (date: Date, option: TariffOption = TariffOption.STANDARD): { cycle: TariffCycle, season: Season, dayType: DayType } => {
+  const year = date.getFullYear();
+  const lastSundayMarch = getLastSunday(year, 2);
+  const lastSundayOctober = getLastSunday(year, 9);
+  
+  const isSummer = date >= lastSundayMarch && date < lastSundayOctober;
+  const season = isSummer ? Season.SUMMER : Season.WINTER;
+  const day = date.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+  const mins = getMinutes(date);
+
+  let dayType = DayType.WEEKDAY;
+  if (day === 6) dayType = DayType.SATURDAY;
+  else if (day === 0) dayType = DayType.SUNDAY;
+
+  let cycle = TariffCycle.VAZIO_NORMAL;
+
+  if (option === TariffOption.STANDARD) {
+    if (isSummer) {
+      if (day >= 1 && day <= 5) { // Weekdays
+        if (mins >= 9*60+15 && mins < 12*60+15) cycle = TariffCycle.PONTA;
+        else if (mins >= 7*60 && mins < 9*60+15) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 12*60+15 && mins < 24*60) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 0 && mins < 2*60) cycle = TariffCycle.VAZIO_NORMAL;
+        else if (mins >= 6*60 && mins < 7*60) cycle = TariffCycle.VAZIO_NORMAL;
+        else cycle = TariffCycle.SUPER_VAZIO;
+      } else if (day === 6) { // Saturday
+        if (mins >= 9*60 && mins < 14*60) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 20*60 && mins < 22*60) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 2*60 && mins < 6*60) cycle = TariffCycle.SUPER_VAZIO;
+        else cycle = TariffCycle.VAZIO_NORMAL;
+      } else { // Sunday
+        if (mins >= 2*60 && mins < 6*60) cycle = TariffCycle.SUPER_VAZIO;
+        else cycle = TariffCycle.VAZIO_NORMAL;
+      }
+    } else { // Winter
+      if (day >= 1 && day <= 5) { // Weekdays
+        if (mins >= 9*60+30 && mins < 12*60) cycle = TariffCycle.PONTA;
+        else if (mins >= 18*60+30 && mins < 21*60) cycle = TariffCycle.PONTA;
+        else if (mins >= 7*60 && mins < 9*60+30) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 12*60 && mins < 18*60+30) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 21*60 && mins < 24*60) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 0 && mins < 2*60) cycle = TariffCycle.VAZIO_NORMAL;
+        else if (mins >= 6*60 && mins < 7*60) cycle = TariffCycle.VAZIO_NORMAL;
+        else cycle = TariffCycle.SUPER_VAZIO;
+      } else if (day === 6) { // Saturday
+        if (mins >= 9*60+30 && mins < 13*60) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 18*60+30 && mins < 22*60) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 2*60 && mins < 6*60) cycle = TariffCycle.SUPER_VAZIO;
+        else cycle = TariffCycle.VAZIO_NORMAL;
+      } else { // Sunday
+        if (mins >= 2*60 && mins < 6*60) cycle = TariffCycle.SUPER_VAZIO;
+        else cycle = TariffCycle.VAZIO_NORMAL;
+      }
+    }
+  } else {
+    // Optional Cycle
+    if (isSummer) {
+      if (day >= 1 && day <= 5) { // Weekdays
+        if (mins >= 14*60 && mins < 17*60) cycle = TariffCycle.PONTA;
+        else if (mins >= 0 && mins < 0*60+30) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 7*60+30 && mins < 14*60) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 17*60 && mins < 24*60) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 0*60+30 && mins < 2*60) cycle = TariffCycle.VAZIO_NORMAL;
+        else if (mins >= 6*60 && mins < 7*60+30) cycle = TariffCycle.VAZIO_NORMAL;
+        else cycle = TariffCycle.SUPER_VAZIO;
+      } else if (day === 6) { // Saturday
+        if (mins >= 10*60 && mins < 13*60+30) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 19*60+30 && mins < 23*60) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 3*60+30 && mins < 7*60+30) cycle = TariffCycle.SUPER_VAZIO;
+        else cycle = TariffCycle.VAZIO_NORMAL;
+      } else { // Sunday
+        if (mins >= 4*60 && mins < 8*60) cycle = TariffCycle.SUPER_VAZIO;
+        else cycle = TariffCycle.VAZIO_NORMAL;
+      }
+    } else { // Winter
+      if (day >= 1 && day <= 5) { // Weekdays
+        if (mins >= 17*60 && mins < 22*60) cycle = TariffCycle.PONTA;
+        else if (mins >= 0 && mins < 0*60+30) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 7*60+30 && mins < 17*60) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 22*60 && mins < 24*60) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 0*60+30 && mins < 2*60) cycle = TariffCycle.VAZIO_NORMAL;
+        else if (mins >= 6*60 && mins < 7*60+30) cycle = TariffCycle.VAZIO_NORMAL;
+        else cycle = TariffCycle.SUPER_VAZIO;
+      } else if (day === 6) { // Saturday
+        if (mins >= 10*60+30 && mins < 12*60+30) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 17*60+30 && mins < 22*60+30) cycle = TariffCycle.CHEIAS;
+        else if (mins >= 3*60 && mins < 7*60) cycle = TariffCycle.SUPER_VAZIO;
+        else cycle = TariffCycle.VAZIO_NORMAL;
+      } else { // Sunday
+        if (mins >= 4*60 && mins < 8*60) cycle = TariffCycle.SUPER_VAZIO;
+        else cycle = TariffCycle.VAZIO_NORMAL;
+      }
+    }
+  }
+
+  return { cycle, season, dayType };
+};
 
 // Helper to parse numbers that might use comma as decimal separator
 const parseValue = (val: any): number => {
@@ -131,7 +240,7 @@ export const getExcelPreview = async (file: File): Promise<any[][]> => {
 };
 
 // Parse uploaded files based on user mapping
-export const parseExcelFiles = async (files: File[], mapping: ColumnMapping): Promise<{ data: TelemetryRow[], cpe: string | null }> => {
+export const parseExcelFiles = async (files: File[], mapping: ColumnMapping, option: TariffOption = TariffOption.STANDARD): Promise<{ data: TelemetryRow[], cpe: string | null }> => {
   const allRows: TelemetryRow[] = [];
   let detectedCpe: string | null = null;
 
@@ -180,11 +289,15 @@ export const parseExcelFiles = async (files: File[], mapping: ColumnMapping): Pr
          if (jsonData[i + inductiveOffset]) inductive = parseValue(jsonData[i + inductiveOffset][mapping.inductiveCol]);
          if (jsonData[i + capacitiveOffset]) capacitive = parseValue(jsonData[i + capacitiveOffset][mapping.capacitiveCol]);
 
+         const info = getTariffInfo(date, option);
          allRows.push({
            timestamp: date,
            activePower: active,
            inductivePower: inductive,
            capacitivePower: capacitive,
+           cycle: info.cycle,
+           season: info.season,
+           dayType: info.dayType
          });
       }
     }
@@ -199,7 +312,7 @@ export const parseExcelFiles = async (files: File[], mapping: ColumnMapping): Pr
 };
 
 // Aggregation Logic: 15min -> 1 Hour
-export const aggregateToHourly = (rows: TelemetryRow[]): HourlyData[] => {
+export const aggregateToHourly = (rows: TelemetryRow[], option: TariffOption = TariffOption.STANDARD): HourlyData[] => {
   const grouped: Record<string, TelemetryRow[]> = {};
 
   rows.forEach(row => {
@@ -224,6 +337,7 @@ export const aggregateToHourly = (rows: TelemetryRow[]): HourlyData[] => {
     const capacitives = group.map(r => r.capacitivePower);
     const capAvg = capacitives.reduce((a, b) => a + b, 0) / group.length;
     
+    const info = getTariffInfo(date, option);
     return {
       timestamp: date,
       hourLabel: date.toLocaleString('pt-PT', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
@@ -236,6 +350,9 @@ export const aggregateToHourly = (rows: TelemetryRow[]): HourlyData[] => {
       capacitiveAvg: capAvg,
       capacitiveMax: Math.max(...capacitives),
       capacitiveMin: Math.min(...capacitives),
+      cycle: info.cycle,
+      season: info.season,
+      dayType: info.dayType
     };
   }).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 };
@@ -247,6 +364,7 @@ export interface ExportConfig {
         active: boolean;
         inductive: boolean;
         capacitive: boolean;
+        cost: boolean;
     };
 }
 
@@ -262,7 +380,8 @@ export const generateCSV = (data: any[], config: ExportConfig) => {
             dateTime: d.timestamp.toLocaleString('pt-PT'),
             active: d.activePower,
             inductive: d.inductivePower,
-            capacitive: d.capacitivePower
+            capacitive: d.capacitivePower,
+            cost: d.cost || 0
         }));
     } else if (config.resolution === 'hourly') {
         processedData = data.map((d: HourlyData) => ({
@@ -272,11 +391,12 @@ export const generateCSV = (data: any[], config: ExportConfig) => {
             dateTime: d.timestamp.toLocaleString('pt-PT'),
             active: d.activeAvg,
             inductive: d.inductiveAvg,
-            capacitive: d.capacitiveAvg
+            capacitive: d.capacitiveAvg,
+            cost: d.cost || 0
         }));
     } else {
         // Aggregate for Daily or Monthly
-        const grouped: Record<string, { timestamp: Date, count: number, actSum: number, indSum: number, capSum: number }> = {};
+        const grouped: Record<string, { timestamp: Date, count: number, actSum: number, indSum: number, capSum: number, costSum: number }> = {};
         
         data.forEach(d => {
             let key = '';
@@ -289,12 +409,15 @@ export const generateCSV = (data: any[], config: ExportConfig) => {
                 key = d.timestamp.toLocaleString('pt-PT', { month: 'long', year: 'numeric' });
                 ts.setDate(1); ts.setHours(0,0,0,0);
             }
+            
+            const costVal = d.cost || 0;
 
-            if (!grouped[key]) grouped[key] = { timestamp: ts, count: 0, actSum: 0, indSum: 0, capSum: 0 };
+            if (!grouped[key]) grouped[key] = { timestamp: ts, count: 0, actSum: 0, indSum: 0, capSum: 0, costSum: 0 };
             grouped[key].count++;
-            grouped[key].actSum += d.activeAvg;
-            grouped[key].indSum += d.inductiveAvg;
-            grouped[key].capSum += d.capacitiveAvg;
+            grouped[key].actSum += d.activeAvg || d.activePower || 0;
+            grouped[key].indSum += d.inductiveAvg || d.inductivePower || 0;
+            grouped[key].capSum += d.capacitiveAvg || d.capacitivePower || 0;
+            grouped[key].costSum += costVal;
         });
 
         processedData = Object.keys(grouped).map(k => {
@@ -307,7 +430,8 @@ export const generateCSV = (data: any[], config: ExportConfig) => {
                 dateTime: k,
                 active: g.actSum,
                 inductive: g.indSum,
-                capacitive: g.capSum
+                capacitive: g.capSum,
+                cost: g.costSum
             };
         });
     }
@@ -324,6 +448,7 @@ export const generateCSV = (data: any[], config: ExportConfig) => {
     if (config.columns.active) headers.push((config.resolution === 'hourly' || config.resolution === 'raw') ? 'Ativa (kW)' : 'Ativa (kWh)');
     if (config.columns.inductive) headers.push((config.resolution === 'hourly' || config.resolution === 'raw') ? 'Indutiva (kVAr)' : 'Indutiva (kVArh)');
     if (config.columns.capacitive) headers.push((config.resolution === 'hourly' || config.resolution === 'raw') ? 'Capacitiva (kVAr)' : 'Capacitiva (kVArh)');
+    if (config.columns.cost) headers.push('Custo (€)');
 
     // 3. Build Rows
     const rows = processedData.map(d => {
@@ -340,6 +465,7 @@ export const generateCSV = (data: any[], config: ExportConfig) => {
         if (config.columns.active) row.push(d.active.toFixed(2));
         if (config.columns.inductive) row.push(d.inductive.toFixed(2));
         if (config.columns.capacitive) row.push(d.capacitive.toFixed(2));
+        if (config.columns.cost) row.push(d.cost.toFixed(4));
         return row;
     });
 
@@ -354,4 +480,12 @@ export const generateCSV = (data: any[], config: ExportConfig) => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+};
+
+export const parseRetailersExcel = async (file: File): Promise<any[]> => {
+  const dataBuffer = await file.arrayBuffer();
+  const workbook = window.XLSX.read(dataBuffer, { type: 'array' });
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  return window.XLSX.utils.sheet_to_json(sheet);
 };

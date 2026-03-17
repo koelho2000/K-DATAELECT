@@ -1,8 +1,8 @@
 
 
 import React, { useState } from 'react';
-import { ProjectState, ReportSectionConfig } from '../types';
-import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend, ReferenceLine } from 'recharts';
+import { ProjectState, ReportSectionConfig, TariffCycle, Season, DayType } from '../types';
+import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend, ReferenceLine, Cell } from 'recharts';
 import { generateReportAnalysis } from '../services/geminiService';
 import ReactMarkdown from 'react-markdown';
 
@@ -75,6 +75,8 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
       intro: true,
       active: true,
       energy: true,
+      cycleAnalysis: true,
+      costs: true,
       inductive: true,
       capacitive: true,
       tables: true,
@@ -87,6 +89,14 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
     const text = await generateReportAnalysis(project.hourlyData, project.metadata);
     updateAnalysis(text);
     setIsGenerating(false);
+  };
+
+  const handlePrint = () => {
+    window.focus();
+    setTimeout(() => {
+      window.print();
+    }, 100);
+    setShowExportMenu(false);
   };
 
   const handleExport = (type: 'html' | 'doc') => {
@@ -201,6 +211,121 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
   const indSumStats = getStats(monthlyData, 'inductiveSum');
   const capSumStats = getStats(monthlyData, 'capacitiveSum');
 
+  // Cycle Stats for Report
+  const cycleStats = React.useMemo(() => {
+    const stats: Record<string, { sum: number, max: number, color: string }> = {
+      [TariffCycle.PONTA]: { sum: 0, max: 0, color: '#ef4444' },
+      [TariffCycle.CHEIAS]: { sum: 0, max: 0, color: '#3b82f6' },
+      [TariffCycle.VAZIO_NORMAL]: { sum: 0, max: 0, color: '#10b981' },
+      [TariffCycle.SUPER_VAZIO]: { sum: 0, max: 0, color: '#8b5cf6' },
+    };
+
+    project.hourlyData.forEach(d => {
+      if (d.cycle && stats[d.cycle]) {
+        stats[d.cycle].sum += d.activeAvg;
+        stats[d.cycle].max = Math.max(stats[d.cycle].max, d.activeMax);
+      }
+    });
+
+    const total = Object.values(stats).reduce((acc, s) => acc + s.sum, 0);
+
+    return Object.entries(stats).map(([name, data]) => ({
+      name,
+      ...data,
+      percentage: (data.sum / (total || 1)) * 100
+    }));
+  }, [project.hourlyData]);
+
+  const comparisonData = React.useMemo(() => {
+    if (project.hourlyData.length === 0) return [];
+
+    const totalEnergy = project.hourlyData.reduce((acc, curr) => acc + curr.activeAvg, 0);
+    const energyByCycle = project.hourlyData.reduce((acc, curr) => {
+      const cycle = curr.cycle || TariffCycle.CHEIAS;
+      acc[cycle] = (acc[cycle] || 0) + curr.activeAvg;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const results = [];
+
+    // 1. Current Invoice
+    if (project.invoice) {
+      const inv = project.invoice;
+      const cost = 
+        (energyByCycle[TariffCycle.PONTA] || 0) * inv.costs.ponta +
+        (energyByCycle[TariffCycle.CHEIAS] || 0) * inv.costs.cheias +
+        (energyByCycle[TariffCycle.VAZIO_NORMAL] || 0) * inv.costs.vazio +
+        (energyByCycle[TariffCycle.SUPER_VAZIO] || 0) * inv.costs.superVazio +
+        inv.costs.fixed;
+      
+      results.push({
+        name: 'Fatura Atual',
+        totalCost: cost,
+        avgPrice: cost / totalEnergy,
+        type: 'current'
+      });
+    }
+
+    // 2. OMIE Market
+    const omieCost = project.hourlyData.reduce((acc, curr) => acc + (curr.cost || 0), 0);
+    results.push({
+      name: 'Mercado OMIE (Spot)',
+      totalCost: omieCost,
+      avgPrice: omieCost / totalEnergy,
+      type: 'omie'
+    });
+
+    // 3. Retailers (Simplified list for report)
+    const RETAILERS = [
+      { name: 'EDP Comercial', costs: { ponta: 0.22, cheias: 0.18, vazio: 0.12, superVazio: 0.09, fixed: 12.5 } },
+      { name: 'Endesa', costs: { ponta: 0.21, cheias: 0.17, vazio: 0.11, superVazio: 0.08, fixed: 11.0 } }
+    ];
+
+    RETAILERS.forEach(ret => {
+      const cost = 
+        (energyByCycle[TariffCycle.PONTA] || 0) * ret.costs.ponta +
+        (energyByCycle[TariffCycle.CHEIAS] || 0) * ret.costs.cheias +
+        (energyByCycle[TariffCycle.VAZIO_NORMAL] || 0) * ret.costs.vazio +
+        (energyByCycle[TariffCycle.SUPER_VAZIO] || 0) * ret.costs.superVazio +
+        ret.costs.fixed;
+
+      results.push({
+        name: ret.name,
+        totalCost: cost,
+        avgPrice: cost / totalEnergy,
+        type: 'retailer'
+      });
+    });
+
+    return results.sort((a, b) => a.totalCost - b.totalCost);
+  }, [project.hourlyData, project.invoice]);
+
+  // Detailed Cycle Stats for Report
+  const detailedCycleStats = React.useMemo(() => {
+    const map: Record<string, { season: Season, dayType: DayType, cycle: TariffCycle, sum: number, max: number }> = {};
+
+    project.hourlyData.forEach(d => {
+      if (d.cycle && d.season && d.dayType) {
+        const key = `${d.season}-${d.dayType}-${d.cycle}`;
+        if (!map[key]) {
+          map[key] = { season: d.season, dayType: d.dayType, cycle: d.cycle, sum: 0, max: 0 };
+        }
+        map[key].sum += d.activeAvg;
+        map[key].max = Math.max(map[key].max, d.activeMax);
+      }
+    });
+
+    return Object.values(map).sort((a, b) => {
+      if (a.season !== b.season) return a.season === Season.SUMMER ? -1 : 1;
+      if (a.dayType !== b.dayType) {
+        const order = [DayType.WEEKDAY, DayType.SATURDAY, DayType.SUNDAY];
+        return order.indexOf(a.dayType) - order.indexOf(b.dayType);
+      }
+      const cycleOrder = [TariffCycle.PONTA, TariffCycle.CHEIAS, TariffCycle.VAZIO_NORMAL, TariffCycle.SUPER_VAZIO];
+      return cycleOrder.indexOf(a.cycle) - cycleOrder.indexOf(b.cycle);
+    });
+  }, [project.hourlyData]);
+
   return (
     <div className="max-w-4xl mx-auto bg-white text-black leading-relaxed font-sans">
       
@@ -231,7 +356,7 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
                     
                     {showExportMenu && (
                         <div className="absolute right-0 mt-2 w-48 bg-white text-slate-800 rounded shadow-xl border border-gray-200 z-50">
-                            <button onClick={() => { window.print(); setShowExportMenu(false); }} className="w-full text-left px-4 py-2 hover:bg-gray-100 flex items-center gap-2">
+                            <button onClick={handlePrint} className="w-full text-left px-4 py-2 hover:bg-gray-100 flex items-center gap-2">
                                 <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
                                 Imprimir / PDF
                             </button>
@@ -262,6 +387,14 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
             <label className="flex items-center space-x-2 cursor-pointer">
                 <input type="checkbox" checked={sections.energy} onChange={e => setSections(p => ({...p, energy: e.target.checked}))} className="rounded" />
                 <span>Análise Energia (kWh)</span>
+            </label>
+            <label className="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" checked={sections.cycleAnalysis} onChange={e => setSections(p => ({...p, cycleAnalysis: e.target.checked}))} className="rounded" />
+                <span>Análise por Ciclo</span>
+            </label>
+            <label className="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" checked={sections.costs} onChange={e => setSections(p => ({...p, costs: e.target.checked}))} className="rounded" />
+                <span>Análise Comercial</span>
             </label>
             <label className="flex items-center space-x-2 cursor-pointer">
                 <input type="checkbox" checked={sections.inductive} onChange={e => setSections(p => ({...p, inductive: e.target.checked}))} className="rounded" />
@@ -339,6 +472,18 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
             {sections.energy && (
             <li className="flex justify-between border-b border-gray-100 pb-2">
                 <span className="font-medium text-slate-700">3. Análise de Consumo de Energia Ativa (kWh)</span>
+                <span className="text-gray-400">--</span>
+            </li>
+            )}
+            {sections.cycleAnalysis && (
+            <li className="flex justify-between border-b border-gray-100 pb-2">
+                <span className="font-medium text-slate-700">4. Análise por Ciclo Tarifário</span>
+                <span className="text-gray-400">--</span>
+            </li>
+            )}
+            {sections.costs && (
+            <li className="flex justify-between border-b border-gray-100 pb-2">
+                <span className="font-medium text-slate-700">5. Análise Comercial e Custos</span>
                 <span className="text-gray-400">--</span>
             </li>
             )}
@@ -513,6 +658,155 @@ const ReportView: React.FC<ReportViewProps> = ({ project, updateAnalysis }) => {
             <p className="text-slate-800">
                 O mês de maior consumo foi <strong>{activeSumStats.maxMonth}</strong> com {activeSumStats.max.toLocaleString('pt-PT', {maximumFractionDigits: 0})} kWh ({((activeSumStats.max/(activeSumStats.total || 1))*100).toFixed(1)}% do total), 
                 enquanto o menor registo ocorreu em <strong>{activeSumStats.minMonth}</strong>.
+            </p>
+        </div>
+      </div>
+      )}
+
+      {/* --- Page X: Cycle Analysis --- */}
+      {sections.cycleAnalysis && (
+      <div className="min-h-[297mm] p-16 page-break break-after-page print:break-after-page">
+        <h2 className="text-2xl font-bold text-slate-900 mb-6 pb-2 border-b border-gray-300">4. Análise por Ciclo Tarifário</h2>
+        <p className="mb-6 text-gray-700 text-justify">
+            A distribuição do consumo pelos diferentes ciclos tarifários (Ponta, Cheias, Vazio Normal e Super Vazio) é fundamental para a otimização da fatura energética e avaliação do perfil de laboração.
+        </p>
+
+        <div className="grid grid-cols-2 gap-8 mb-8">
+            <div className="h-64 border border-gray-200 p-2">
+                <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={cycleStats} layout="vertical" margin={{ left: 20, right: 30 }}>
+                        <XAxis type="number" hide />
+                        <YAxis dataKey="name" type="category" fontSize={10} width={80} />
+                        <Tooltip formatter={(value: number) => [`${value.toLocaleString('pt-PT', { maximumFractionDigits: 0 })} kWh`, 'Energia']} />
+                        <Bar dataKey="sum" radius={[0, 4, 4, 0]}>
+                            {cycleStats.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={entry.color} />
+                            ))}
+                        </Bar>
+                    </BarChart>
+                </ResponsiveContainer>
+            </div>
+            <div className="space-y-4">
+                {cycleStats.map((cycle) => (
+                    <div key={cycle.name} className="p-3 bg-slate-50 rounded border border-slate-100">
+                        <div className="flex justify-between items-center mb-1">
+                            <span className="text-sm font-bold text-slate-800">{cycle.name}</span>
+                            <span className="text-xs font-mono text-blue-600 font-bold">{cycle.percentage.toFixed(1)}%</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                            <div className="h-1.5 rounded-full" style={{ width: `${cycle.percentage}%`, backgroundColor: cycle.color }}></div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+
+        <h3 className="font-bold text-lg mb-2 text-slate-700">Tabela de Consumo por Ciclo</h3>
+        <table className="w-full text-xs border border-gray-300 mb-6 text-black">
+             <thead className="bg-slate-50">
+                <tr>
+                    <th className="border p-2 text-left">Ciclo</th>
+                    <th className="border p-2 text-right">Consumo (kWh)</th>
+                    <th className="border p-2 text-right">Pico Máximo (kW)</th>
+                    <th className="border p-2 text-right">% do Total</th>
+                </tr>
+             </thead>
+             <tbody>
+                {cycleStats.map((cycle, i) => (
+                    <tr key={i}>
+                        <td className="border p-2 font-medium">{cycle.name}</td>
+                        <td className="border p-2 text-right font-bold">{cycle.sum.toLocaleString('pt-PT', {maximumFractionDigits: 0})}</td>
+                        <td className="border p-2 text-right">{cycle.max.toFixed(2)}</td>
+                        <td className="border p-2 text-right">{cycle.percentage.toFixed(1)}%</td>
+                    </tr>
+                ))}
+             </tbody>
+        </table>
+
+        <h3 className="font-bold text-lg mb-2 text-slate-700">Detalhamento por Estação e Horário</h3>
+        <table className="w-full text-[10px] border border-gray-300 mb-6 text-black">
+             <thead className="bg-slate-50">
+                <tr>
+                    <th className="border p-2 text-left">Estação</th>
+                    <th className="border p-2 text-left">Tipo de Dia</th>
+                    <th className="border p-2 text-left">Ciclo</th>
+                    <th className="border p-2 text-right">Consumo (kWh)</th>
+                    <th className="border p-2 text-right">Pico Máx (kW)</th>
+                </tr>
+             </thead>
+             <tbody>
+                {detailedCycleStats.map((row, i) => (
+                    <tr key={i}>
+                        <td className="border p-2">{row.season}</td>
+                        <td className="border p-2">{row.dayType}</td>
+                        <td className="border p-2">{row.cycle}</td>
+                        <td className="border p-2 text-right font-bold">{row.sum.toLocaleString('pt-PT', {maximumFractionDigits: 0})}</td>
+                        <td className="border p-2 text-right">{row.max.toFixed(2)}</td>
+                    </tr>
+                ))}
+             </tbody>
+        </table>
+
+        <div className="bg-slate-50 p-4 rounded border-l-4 border-purple-500 text-sm text-justify">
+            <h4 className="font-bold text-purple-900 mb-2">Parecer sobre Ciclos Tarifários</h4>
+            <p className="text-slate-800">
+                A análise demonstra que o ciclo de <strong>{[...cycleStats].sort((a,b) => b.sum - a.sum)[0].name}</strong> representa a maior parcela do consumo energético. 
+                A gestão de cargas fora dos períodos de Ponta é essencial para a redução de custos, especialmente em instalações com tarifários diferenciados.
+            </p>
+        </div>
+      </div>
+      )}
+
+      {/* --- Page: Commercial Analysis --- */}
+      {sections.costs && (
+      <div className="min-h-[297mm] p-16 page-break break-after-page print:break-after-page">
+        <h2 className="text-2xl font-bold text-slate-900 mb-6 pb-2 border-b border-gray-300">5. Análise Comercial e Simulação de Custos</h2>
+        <p className="mb-6 text-gray-700 text-justify">
+            Esta secção apresenta uma simulação de custos baseada no perfil de consumo da instalação, comparando a fatura atual (se fornecida) com o mercado OMIE e as principais comercializadoras.
+        </p>
+
+        {/* Comparison Chart in Report */}
+        <div className="h-64 w-full mb-8 border border-gray-200 p-4">
+             <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={comparisonData} layout="vertical" margin={{ left: 40, right: 40 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" hide />
+                    <YAxis dataKey="name" type="category" fontSize={10} width={120} />
+                    <Tooltip formatter={(value: number) => [`${value.toLocaleString('pt-PT', { style: 'currency', currency: 'EUR' })}`, 'Custo Total']} />
+                    <Bar dataKey="totalCost" radius={[0, 4, 4, 0]}>
+                        {comparisonData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.type === 'current' ? '#3b82f6' : entry.type === 'omie' ? '#8b5cf6' : '#10b981'} />
+                        ))}
+                    </Bar>
+                </BarChart>
+             </ResponsiveContainer>
+             <p className="text-center text-xs text-gray-500 mt-2 italic">Fig. Comparativo de Custos Totais Estimados</p>
+        </div>
+
+        <table className="w-full text-xs border border-gray-300 mb-6 text-black">
+             <thead className="bg-slate-50">
+                <tr>
+                    <th className="border p-2 text-left">Comercializadora</th>
+                    <th className="border p-2 text-right">Custo Total (€)</th>
+                    <th className="border p-2 text-right">Preço Médio (€/kWh)</th>
+                </tr>
+             </thead>
+             <tbody>
+                {comparisonData.map((row, i) => (
+                    <tr key={i}>
+                        <td className="border p-2 font-medium">{row.name}</td>
+                        <td className="border p-2 text-right font-bold">{row.totalCost.toLocaleString('pt-PT', { style: 'currency', currency: 'EUR' })}</td>
+                        <td className="border p-2 text-right">{row.avgPrice.toFixed(4)} €</td>
+                    </tr>
+                ))}
+             </tbody>
+        </table>
+
+        <div className="bg-slate-50 p-4 rounded border-l-4 border-blue-500 text-sm text-justify">
+            <h4 className="font-bold text-blue-900 mb-2">Conclusões da Análise Comercial</h4>
+            <p className="text-slate-800">
+                A comparação entre comercializadoras permite identificar oportunidades de poupança imediata. 
+                O mercado OMIE (Spot) apresenta-se como uma alternativa variável que pode ser vantajosa para perfis com flexibilidade de consumo.
             </p>
         </div>
       </div>
